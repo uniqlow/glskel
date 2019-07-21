@@ -11,26 +11,22 @@ static constexpr auto const gHeight = 1024;
 static GLchar const * gVsSrcRender = {
 R"(#version 450 core
 
-out vec2 v_uv;
+layout (location = 0) in vec2 pos;
+layout (location = 1) in vec2 uv;
 
-layout(std140, binding = 0) uniform ViewportUniforms
+layout (location = 0) out vec2 v_uv;
+
+layout (std140, binding = 0) uniform ViewportUniforms
 {
 	mat4 u_viewMatrix;
 	vec4 u_viewport;
 	float u_time;
 };
 
-const vec4 va[3] = vec4[]
-	(
-		vec4(-0.5, -0.5, 0.0, 0.0),
-		vec4( 0.5,  0.5, 1.0, 1.0),
-		vec4(-0.5,  0.5, 0.0, 1.0)
-	);
-
 void main()
 {
-	gl_Position = vec4(va[gl_VertexID].xy, 0.0, 1.0);
-	v_uv = va[gl_VertexID].zw;
+	gl_Position = vec4(pos, 0.0, 1.0);
+	v_uv = uv;
 }
 )"
 };
@@ -38,17 +34,17 @@ void main()
 static GLchar const * gFsSrcRender = {
 R"(#version 450 core
 
-in vec2 v_uv;
+layout (location = 0) in vec2 v_uv;
 layout (location = 0) out vec4 fCol;
 
-layout(std140, binding = 0) uniform ViewportUniforms
+layout (std140, binding = 0) uniform ViewportUniforms
 {
 	mat4 u_viewMatrix;
 	vec4 u_viewport;
 	float u_time;
 };
 
-uniform sampler2D diffuse;
+layout( binding = 0) uniform sampler2D diffuse;
 
 void main()
 {
@@ -85,14 +81,14 @@ static GLchar const * gFsSrcPostProcess = {
 R"(#version 450 core
 layout (location = 0) out vec4 fCol;
 
-layout(std140, binding = 0) uniform ViewportUniforms
+layout (std140, binding = 0) uniform ViewportUniforms
 {
 	mat4 u_viewMatrix;
 	vec4 u_viewport;
 	float u_time;
 };
 
-uniform sampler2D previouspass;
+layout (binding = 0) uniform sampler2D previouspass;
 
 void main()
 {
@@ -294,7 +290,7 @@ main()
 
 	GLuint viewportUBO;
 	glCreateBuffers(1, &viewportUBO);
-	glNamedBufferStorage(viewportUBO, sizeof viewportUniforms, &viewportUniforms, GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
+	glNamedBufferStorage(viewportUBO, sizeof viewportUniforms, &viewportUniforms, GL_DYNAMIC_STORAGE_BIT);
 
 	GLuint fbotex;
 	glCreateTextures(GL_TEXTURE_2D, 1, &fbotex);
@@ -319,14 +315,61 @@ main()
 	glActiveTexture(GL_TEXTURE0 + 0);
 
 	glUseProgram(program[ProgramType::RENDER][0]);
-	glUniform1i(glGetUniformLocation(program[ProgramType::RENDER][0], "diffuse"), 0);
+	//glUniform1i(glGetUniformLocation(program[ProgramType::RENDER][0], "diffuse"), 0);
+	glUniform1i(0, 0);
 
 	glUseProgram(program[ProgramType::POSTPROCESS][0]);
-	glUniform1i(glGetUniformLocation(program[ProgramType::POSTPROCESS][0], "previouspass"), 0);
+	//glUniform1i(glGetUniformLocation(program[ProgramType::POSTPROCESS][0], "previouspass"), 0);
+	glUniform1i(0, 0);
 
 	GLuint vao;
 	glCreateVertexArrays(1, &vao);
 	glBindVertexArray(vao);
+
+//#define INTERLEAVED
+#if defined(INTERLEAVED)
+	float triangle[3][4] = {
+		{ -0.5f, -0.5f, 0.0f, 0.0f },
+		{  0.5f,  0.5f, 1.0f, 1.0f },
+		{ -0.5f,  0.5f, 0.0f, 1.0f }
+	};
+
+	GLuint vbo;
+	glCreateBuffers(1, &vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, vbo);
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4*sizeof(float), 0);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4*sizeof(float), (void const*)(2*sizeof(float)));
+	glBufferData(GL_ARRAY_BUFFER, sizeof triangle, triangle, GL_STATIC_DRAW);
+#else
+        float const trianglePos[3][2] = {
+                { -0.5f, -0.5f },
+                {  0.5f,  0.5f },
+                { -0.5f,  0.5f }
+        };
+        float const triangleUVs[3][2] = {
+                { 0.0f, 0.0f },
+                { 1.0f, 1.0f },
+                { 0.1f, 1.0f }
+        };
+
+	GLuint vbo[2];
+	glCreateBuffers(2, vbo);
+	glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2*sizeof(float), 0);
+	glBufferData(GL_ARRAY_BUFFER, sizeof trianglePos, trianglePos, GL_STATIC_DRAW);
+	glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
+	glEnableVertexAttribArray(1);
+	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 2*sizeof(float), 0);
+	glBufferData(GL_ARRAY_BUFFER, sizeof triangleUVs, triangleUVs, GL_STATIC_DRAW);
+#endif
+	unsigned int const elements[] = { 0u, 1u, 2u };
+	GLuint ebo;
+	glCreateBuffers(1, &ebo);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof elements, elements, GL_STATIC_DRAW);
 
 	double startTime = glfwGetTime();
 	do {
@@ -343,7 +386,7 @@ main()
 
 		glUseProgram(program[ProgramType::RENDER][0]);
 		glBindTexture(GL_TEXTURE_2D, diffuse);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glDrawElements(GL_TRIANGLES, 3, GL_UNSIGNED_INT, (void const*)0);
 
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
