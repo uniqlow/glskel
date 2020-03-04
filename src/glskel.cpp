@@ -3,10 +3,16 @@
 #include <GLFW/glfw3.h>
 #include <cstdio>
 
+//#define INTERLEAVED_VERTEX_ATTRIBUTES
+//#define SHADER_UNIFORM_BINDING_INDEX0 1
+#define SHADER_UNIFORM_BINDING_INDEX1 2
+
+
 namespace {
 
 static constexpr auto const gWidth = 1024;
 static constexpr auto const gHeight = 1024;
+
 
 static GLchar const * gVsSrcRender = {
 R"(#version 450 core
@@ -16,7 +22,7 @@ layout (location = 1) in vec2 uv;
 
 layout (location = 0) out vec2 v_uv;
 
-layout (std140, binding = 0) uniform ViewportUniforms
+layout (std140, binding = 1) uniform ViewportUniforms
 {
 	mat4 u_viewMatrix;
 	vec4 u_viewport;
@@ -37,7 +43,7 @@ R"(#version 450 core
 layout (location = 0) in vec2 v_uv;
 layout (location = 0) out vec4 fCol;
 
-layout (std140, binding = 0) uniform ViewportUniforms
+layout (std140, binding = 1) uniform ViewportUniforms
 {
 	mat4 u_viewMatrix;
 	vec4 u_viewport;
@@ -56,7 +62,7 @@ void main()
 static GLchar const * gVsSrcPostProcess = {
 R"(#version 450 core
 
-layout(std140, binding = 0) uniform ViewportUniforms
+layout(std140, binding = 2) uniform ViewportUniforms
 {
 	mat4 u_viewMatrix;
 	vec4 u_viewport;
@@ -81,7 +87,7 @@ static GLchar const * gFsSrcPostProcess = {
 R"(#version 450 core
 layout (location = 0) out vec4 fCol;
 
-layout (std140, binding = 0) uniform ViewportUniforms
+layout (std140, binding = 2) uniform ViewportUniforms
 {
 	mat4 u_viewMatrix;
 	vec4 u_viewport;
@@ -258,13 +264,18 @@ main()
 		auto const prg = linkProgram(shader, sizeof shader/sizeof(GLuint));
 		if (!prg) { return -5; }
 		program[ProgramType::RENDER][0] = prg;
+#ifndef SHADER_UNIFORM_BINDING_INDEX0
+                std::printf("Using reflection to get uniform block index and binding index for shader0\n");
 		auto const idx = glGetUniformBlockIndex(prg, "ViewportUniforms");
 		if (idx == GL_INVALID_INDEX) {
 			std::fprintf(stderr, "Failed to find ViewportUniforms in render shader program\n");
 			return -6;
 		}
-		glUniformBlockBinding(prg, idx, 0);
-		program[ProgramType::RENDER][1] = idx;
+		glUniformBlockBinding(prg, idx, 3);
+		program[ProgramType::RENDER][1] = 3;
+#else
+                std::printf("Using shader layout for binding index for shader0\n");
+#endif
 	}
 	{
 		GLuint shader[2];
@@ -275,13 +286,18 @@ main()
 		auto const prg = linkProgram(shader, sizeof shader/sizeof(GLuint));
 		if (!prg) { return -5; }
 		program[ProgramType::POSTPROCESS][0] = prg;
+#ifndef SHADER_UNIFORM_BINDING_INDEX1
+                std::printf("Using reflection to get uniform block index and binding index for shader1\n");
 		auto const idx = glGetUniformBlockIndex(prg, "ViewportUniforms");
 		if (idx == GL_INVALID_INDEX) {
 			std::fprintf(stderr, "Failed to find ViewportUniforms in postprocess shader program\n");
 			return -6;
 		}
-		glUniformBlockBinding(prg, idx, 0);
-		program[ProgramType::POSTPROCESS][1] = idx;
+		glUniformBlockBinding(prg, idx, 4);
+		program[ProgramType::POSTPROCESS][1] = 4;
+#else
+                std::printf("Using shader layout for binding index for shader1\n");
+#endif
 	}
 
 	ViewportUniforms viewportUniforms;
@@ -326,8 +342,8 @@ main()
 	glCreateVertexArrays(1, &vao);
 	glBindVertexArray(vao);
 
-//#define INTERLEAVED
-#if defined(INTERLEAVED)
+#if defined(INTERLEAVED_VERTEX_ATTRIBUTES)
+        std::printf("Using interleaved vertex attributes\n");
 	float triangle[3][4] = {
 		{ -0.5f, -0.5f, 0.0f, 0.0f },
 		{  0.5f,  0.5f, 1.0f, 1.0f },
@@ -343,6 +359,7 @@ main()
 	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4*sizeof(float), (void const*)(2*sizeof(float)));
 	glBufferData(GL_ARRAY_BUFFER, sizeof triangle, triangle, GL_STATIC_DRAW);
 #else
+        std::printf("Using non-interleaved vertex attributes\n");
         float const trianglePos[3][2] = {
                 { -0.5f, -0.5f },
                 {  0.5f,  0.5f },
@@ -382,7 +399,11 @@ main()
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+#ifdef SHADER_UNIFORM_BINDING_INDEX0
+		glBindBufferBase(GL_UNIFORM_BUFFER, SHADER_UNIFORM_BINDING_INDEX0, viewportUBO);
+#else
 		glBindBufferBase(GL_UNIFORM_BUFFER, program[ProgramType::RENDER][1], viewportUBO);
+#endif
 
 		glUseProgram(program[ProgramType::RENDER][0]);
 		glBindTexture(GL_TEXTURE_2D, diffuse);
@@ -391,7 +412,11 @@ main()
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+#ifdef SHADER_UNIFORM_BINDING_INDEX1
+		glBindBufferBase(GL_UNIFORM_BUFFER, SHADER_UNIFORM_BINDING_INDEX1, viewportUBO);
+#else
 		glBindBufferBase(GL_UNIFORM_BUFFER, program[ProgramType::POSTPROCESS][1], viewportUBO);
+#endif
 
 		glUseProgram(program[ProgramType::POSTPROCESS][0]);
 		glBindTexture(GL_TEXTURE_2D, fbotex);
